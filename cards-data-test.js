@@ -3,7 +3,6 @@ export default [
 { href: './html/Swords and sandals/index.html', imgSrc: 'swords and sandals.jpeg', name: 'Swords and sandals' , 'page': 5, 'id': 999 },
 { href: './html/Road of the dead/index.html', imgSrc: 'road of the dead.jpeg', name: 'Road of the dead' , 'page': 5, 'id': 995 },
 { href: './html/Island Clash/index.html', imgSrc: 'island clash.jpeg', name: 'Island Clash' , 'page': 5, 'id': 994 },
-{ href: './html/Cat Ninja/index.html', imgSrc: 'cat ninja.jpeg', name: 'Cat Ninja' , 'page': 5, 'id': 993 },
 { href: './html/SSF2/index.html', imgSrc: 'SSF2.png', name: 'SSF2' , 'page': 5, 'id': 992 },
 { href: './html/Thelast.io/index.html', imgSrc: 'thelast.io.png', name: 'Thelast.io' , 'page': 5, 'id': 986 },
 { href: './html/Thats not my neighbor/index.html', imgSrc: 'thats not my neighbor.jpeg', name: 'Thats not my neighbor' , 'page': 5, 'id': 985 },
