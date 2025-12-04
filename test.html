@@ -59,208 +59,237 @@ window.db=firebase.firestore();
 window.functions=firebase.app().functions("us-central1");
 </script>
 <script type="module">
-import games from "./cards-data-test.js";
-
-const siteMapping={
-"strongdog.onrender.com":["https://strongdog.onrender.com","https://strongdog2.onrender.com","https://strongdog3.onrender.com","https://strongdog4.onrender.com","https://strongdog5.onrender.com"],
-"strongdog2.onrender.com":["https://strongdog.onrender.com","https://strongdog2.onrender.com","https://strongdog3.onrender.com","https://strongdog4.onrender.com","https://strongdog5.onrender.com"],
-"stroongdog.netlify.app":["https://stroongdog.netlify.app","https://stroongdog2.netlify.app","https://stroongdog3.netlify.app","https://stroongdog4.netlify.app","https://stroongdog5.netlify.app"],
-"stroongdog2.netlify.app":["https://stroongdog.netlify.app","https://stroongdog2.netlify.app","https://stroongdog3.netlify.app","https://stroongdog4.netlify.app","https://stroongdog5.netlify.app"],
-"mathcord.netlify.app":["https://mathcord.netlify.app","https://mathcord2.netlify.app","https://mathcord3.netlify.app","https://mathcord4.netlify.app","https://mathcord5.netlify.app"]
-};
-function normId(s){return (s||"").toLowerCase().replace(/\s+/g,"").replace(/[^a-z0-9]/g,"")}
-function clean(p){return (p||"").replace(/^\.?\//,"")}
-function baseFor(page){if(!page||page<2)return "";const h=location.hostname;let m=null;for(const k in siteMapping){if(h.includes(k)){m=siteMapping[k];break}}if(m&&m[page-1])return m[page-1].replace(/\/$/,"")+"/";if(page===2)return "/strongdog2/";if(page===3)return "/strongdog3/";if(page===4)return "/strongdog4/";if(page===5)return "/strongdog5/";return "/"}
-function isAbs(u){return /^https?:\/\//i.test(u||"")}
-function hrefFor(h,page){const s=clean(h);return isAbs(s)?s:baseFor(page)+s}
-function imgFor(img,page){const s=clean(img);if(isAbs(s))return s;const b=baseFor(page);return b+(s.startsWith("img/")?s:"img/"+s)}
-
-const disabledSet=new Set();
-let ready=false,inflight=false;
-
-const byId=new Map();
-for(const g of games){byId.set(normId(g.name),g)}
-
-function makeCard(g){
-const to=hrefFor(g.href,g.page);
-const img=imgFor(g.imgSrc,g.page);
-const id=normId(g.name);
-return `
-<div class="card-container" data-game-id="${id}">
-  <a href="${to}" class="card"><img loading="lazy" src="${img}" alt="${g.name}"><figcaption>${g.name}</figcaption></a>
-  <div class="card-buttons">
-    <button class="btn-check" data-game-name="${g.name}" data-game-id="${id}" title="Approve">Approve</button>
-    <button class="btn-delete" data-game-name="${g.name}" data-game-id="${id}" title="Report">Deny</button>
-  </div>
-</div>`}
-
-function filtered(q){
-let list=games.filter(g=>!disabledSet.has(normId(g.name)));
-if(!q)return list;
-const s=(q||"").toLowerCase().trim();
-return list.filter(g=>g.name.toLowerCase().includes(s));
-}
-
-function renderAll(list){grid.innerHTML=list.map(makeCard).join("");wireButtons()}
-function renderSearch(q){
-if(!ready){searchBox.style.display="none";searchBox.innerHTML="";return}
-const res=filtered(q).slice(0,12);
-if(!q||res.length===0){searchBox.style.display="none";searchBox.innerHTML="";return}
-searchBox.innerHTML=res.map(g=>`<a href="${hrefFor(g.href,g.page)}"><img src="${imgFor(g.imgSrc,g.page)}"><span>${g.name}</span></a>`).join("");
-searchBox.style.display="block";
-}
-
-function setBusy(on){
-inflight=on;
-busy.classList.toggle("show",on);
-document.querySelectorAll(".btn-check,.btn-delete").forEach(b=>b.disabled=on);
-}
-
-async function ensureSignedIn(){
-if(firebase.auth().currentUser) return true;
-try{
-const provider=new firebase.auth.GoogleAuthProvider();
-provider.setCustomParameters({prompt:"select_account"});
-await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-await firebase.auth().signInWithPopup(provider);
-return true;
-}catch(e){
-toast("Sign-in blocked or failed. Allow popups and try again.");
-return false;
-}
-}
-
-function toast(msg){
-banner.textContent=msg;
-banner.classList.add("show");
-setTimeout(()=>banner.classList.remove("show"),5000);
-}
-
-function buildPayload(rec){
-const strip=stripParens.checked;
-const rawName=strip?rec.name.replace(/\(.*?\)/g,"").trim():rec.name;
-const override=(nameOverride.value||"").trim();
-const finalName=override||rawName;
-const keyStyle=keySelect.value; // "gameName" or "name"
-const dataset=datasetSelect.value; // "cards-data-test.js" or "cards-data.js"
-const base={href:rec.href,imgSrc:rec.imgSrc,page:rec.page??null,source:"test",dataset};
-if(keyStyle==="name") return {name:finalName,...base};
-return {gameName:finalName,...base};
-}
-
-async function callApprove(rec){
-const fn=window.functions.httpsCallable("approveGameCallable");
-const payload=buildPayload(rec);
-try{
-await fn(payload);
-return {ok:true,name:(payload.gameName||payload.name)};
-}catch(err){
-const msg=(err&&err.message)||"call failed";
-return {ok:false,name:(payload.gameName||payload.name),error:msg,payload};
-}
-}
-
-async function callReport(rec,issue){
-const payload={timestamp:new Date().toISOString(),...buildPayload(rec),issue};
-await fetch("https://script.google.com/macros/s/AKfycbxif7cZdOCWutbiue1m9sSYrH6VKY9VIVnEQDKnZOnJEsSO_cPi1pAU60mxPW8VWpzO/exec",{method:"POST",mode:"no-cors",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-return {ok:true,name:(payload.gameName||payload.name)};
-}
-
-async function approveFlow(id,displayName,btn){
-const rec=byId.get(id);
-if(!rec) throw new Error("Game not found");
-const okAuth=await ensureSignedIn();
-if(!okAuth) throw new Error("Not signed in");
-const res=await callApprove(rec);
-if(res.ok){
-await firebase.firestore().collection("cards").add({gameName:res.name,disable:true});
-btn.closest(".card-container")?.remove();
-toast("Approved ✓");
-}else{
-await firebase.firestore().collection("cards").add({gameName:res.name,disable:true});
-btn.closest(".card-container")?.remove();
-toast("Approved locally only: "+res.error);
-console.warn("approveGameCallable failed:",res.error,"payload:",res.payload);
-}
-}
-
-async function reportFlow(id,displayName,btn){
-const rec=byId.get(id);
-if(!rec) throw new Error("Game not found");
-const okAuth=await ensureSignedIn();
-if(!okAuth) throw new Error("Not signed in");
-const issue=prompt(`Reason for denying ${rec.name}?`); if(!issue) return;
-const res=await callReport(rec,issue);
-await firebase.firestore().collection("cards").add({gameName:res.name,disable:true});
-btn.closest(".card-container")?.remove();
-toast("Denied and logged ✓");
-}
-
-function wireButtons(){
-document.querySelectorAll(".btn-check").forEach(btn=>{
-btn.addEventListener("click",async ()=>{
-if(inflight) return;
-try{setBusy(true);await approveFlow(btn.dataset.gameId,btn.dataset.gameName,btn)}
-catch(err){toast("Error: "+err.message)}
-finally{setBusy(false)}
-});
-});
-document.querySelectorAll(".btn-delete").forEach(btn=>{
-btn.addEventListener("click",async ()=>{
-if(inflight) return;
-try{setBusy(true);await reportFlow(btn.dataset.gameId,btn.dataset.gameName,btn)}
-catch(err){toast("Error: "+err.message)}
-finally{setBusy(false)}
-});
-});
-}
-
-function subscribeDisabled(){
-firebase.firestore().collection("cards").onSnapshot(s=>{
-disabledSet.clear();
-s.forEach(d=>{const v=d.data()||{};if(v.disable)disabledSet.add(normId(v.gameName||""))});
-ready=true;
-loader.classList.add("hidden");
-grid.classList.remove("hidden");
-search.disabled=false;
-renderAll(filtered(""));
-});
-}
-
-const grid=document.getElementById("allGame");
-const search=document.getElementById("searchInput");
-const searchBox=document.getElementById("searchResults");
-const drawer=document.getElementById("drawer");
-const overlay=document.getElementById("overlay");
-const menuIcon=document.getElementById("menuIcon");
-const loader=document.getElementById("loader");
-const busy=document.getElementById("busy");
-const banner=document.getElementById("banner");
-const datasetSelect=document.getElementById("dataset");
-const keySelect=document.getElementById("keySelect");
-const stripParens=document.getElementById("stripParens");
-const nameOverride=document.getElementById("nameOverride");
-const authBtn=document.getElementById("authBtn");
-
-firebase.auth().onAuthStateChanged(u=>{
-document.getElementById("signedIn").textContent=u? (u.email||"Signed in") : "Not signed in";
-authBtn.textContent=u? "Signed in" : "Sign in";
-authBtn.disabled=!!u;
-});
-
-document.addEventListener("DOMContentLoaded",()=>{
-grid.classList.add("hidden");
-search.disabled=true;
-subscribeDisabled();
-authBtn.addEventListener("click",()=>ensureSignedIn());
-search.addEventListener("input",e=>renderSearch(e.target.value));
-document.addEventListener("click",e=>{if(!searchBox.contains(e.target)&&e.target!==search)searchBox.style.display="none"});
-function toggleMenu(open){drawer.classList.toggle("open",open);overlay.classList.toggle("show",open)}
-menuIcon.addEventListener("click",()=>toggleMenu(!drawer.classList.contains("open")));
-overlay.addEventListener("click",()=>toggleMenu(false));
-document.querySelectorAll(".drawer a").forEach(a=>a.addEventListener("click",()=>toggleMenu(false)));
-});
-</script>
+  import games from "./cards-data-test.js";
+  
+  const siteMapping={
+  "strongdog.onrender.com":["https://strongdog.onrender.com","https://strongdog2.onrender.com","https://strongdog3.onrender.com","https://strongdog4.onrender.com","https://strongdog5.onrender.com"],
+  "strongdog2.onrender.com":["https://strongdog.onrender.com","https://strongdog2.onrender.com","https://strongdog3.onrender.com","https://strongdog4.onrender.com","https://strongdog5.onrender.com"],
+  "stroongdog.netlify.app":["https://stroongdog.netlify.app","https://stroongdog2.netlify.app","https://stroongdog3.netlify.app","https://stroongdog4.netlify.app","https://stroongdog5.netlify.app"],
+  "stroongdog2.netlify.app":["https://stroongdog.netlify.app","https://stroongdog2.netlify.app","https://stroongdog3.netlify.app","https://stroongdog4.netlify.app","https://stroongdog5.netlify.app"],
+  "mathcord.netlify.app":["https://mathcord.netlify.app","https://mathcord2.netlify.app","https://mathcord3.netlify.app","https://mathcord4.netlify.app","https://mathcord5.netlify.app"]
+  };
+  
+  function normId(s){return (s||"").toLowerCase().replace(/\s+/g,"").replace(/[^a-z0-9]/g,"")}
+  function clean(p){return (p||"").replace(/^\.?\//,"")}
+  function baseFor(page){
+    if(!page||page<2)return "";
+    const h=location.hostname;
+    let m=null;
+    for(const k in siteMapping){if(h.includes(k)){m=siteMapping[k];break}}
+    if(m&&m[page-1])return m[page-1].replace(/\/$/,"")+"/";
+    if(page===2)return "/strongdog2/";
+    if(page===3)return "/strongdog3/";
+    if(page===4)return "/strongdog4/";
+    if(page===5)return "/strongdog5/";
+    return "/";
+  }
+  function isAbs(u){return /^https?:\/\//i.test(u||"")}
+  function hrefFor(h,page){const s=clean(h);return isAbs(s)?s:baseFor(page)+s}
+  function imgFor(img,page){const s=clean(img);if(isAbs(s))return s;const b=baseFor(page);return b+(s.startsWith("img/")?s:"img/"+s)}
+  
+  const disabledSet=new Set();
+  let ready=false,inflight=false;
+  
+  const byId=new Map();
+  for(const g of games){byId.set(normId(g.name),g)}
+  
+  function makeCard(g){
+  const to=hrefFor(g.href,g.page);
+  const img=imgFor(g.imgSrc,g.page);
+  const id=normId(g.name);
+  return `
+  <div class="card-container" data-game-id="${id}">
+    <a href="${to}" class="card"><img loading="lazy" src="${img}" alt="${g.name}"><figcaption>${g.name}</figcaption></a>
+    <div class="card-buttons">
+      <button class="btn-check" data-game-name="${g.name}" data-game-id="${id}" title="Approve">Approve</button>
+      <button class="btn-delete" data-game-name="${g.name}" data-game-id="${id}" title="Report">Deny</button>
+    </div>
+  </div>`}
+  
+  function filtered(q){
+  let list=games.filter(g=>!disabledSet.has(normId(g.name)));
+  if(!q)return list;
+  const s=(q||"").toLowerCase().trim();
+  return list.filter(g=>g.name.toLowerCase().includes(s));
+  }
+  
+  function renderAll(list){grid.innerHTML=list.map(makeCard).join("");wireButtons()}
+  function renderSearch(q){
+  if(!ready){searchBox.style.display="none";searchBox.innerHTML="";return}
+  const res=filtered(q).slice(0,12);
+  if(!q||res.length===0){searchBox.style.display="none";searchBox.innerHTML="";return}
+  searchBox.innerHTML=res.map(g=>`<a href="${hrefFor(g.href,g.page)}"><img src="${imgFor(g.imgSrc,g.page)}"><span>${g.name}</span></a>`).join("");
+  searchBox.style.display="block";
+  }
+  
+  function setBusy(on){
+  inflight=on;
+  busy.classList.toggle("show",on);
+  document.querySelectorAll(".btn-check,.btn-delete").forEach(b=>b.disabled=on);
+  }
+  
+  async function ensureSignedIn(){
+  if(firebase.auth().currentUser) return true;
+  try{
+  const provider=new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({prompt:"select_account"});
+  await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+  await firebase.auth().signInWithPopup(provider);
+  return true;
+  }catch(e){toast("Sign-in blocked or failed. Allow popups and try again.");return false;}
+  }
+  
+  function toast(msg){
+  banner.textContent=msg;
+  banner.classList.add("show");
+  setTimeout(()=>banner.classList.remove("show"),5000);
+  }
+  
+  function currentUserEmail(){
+  const u=firebase.auth().currentUser;
+  return u?(u.email||u.uid):"Unknown";
+  }
+  
+  function buildPayload(rec){
+  const strip=stripParens.checked;
+  const rawName=strip?rec.name.replace(/\(.*?\)/g,"").trim():rec.name;
+  const override=(nameOverride.value||"").trim();
+  const finalName=override||rawName;
+  const keyStyle=keySelect.value;
+  const dataset=datasetSelect.value;
+  const base={href:rec.href,imgSrc:rec.imgSrc,page:rec.page??null,source:"test",dataset};
+  if(keyStyle==="name") return {name:finalName,...base};
+  return {gameName:finalName,...base};
+  }
+  
+  async function sendLog(payload){
+  await fetch("https://script.google.com/macros/s/AKfycbwJiMu6QMPBUgiY4PUwpPNkZOadxw-uaiLHVsz5FxkiTnbHvB-Ck3G3Gu8LIyJCyFlY4Q/exec",{
+  method:"POST",
+  mode:"no-cors",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify(payload)
+  });
+  }
+  
+  async function callApprove(rec){
+  const fn=window.functions.httpsCallable("approveGameCallable");
+  const payload={
+  ...buildPayload(rec),
+  action:"approve",
+  user:currentUserEmail(),
+  timestamp:new Date().toISOString()
+  };
+  try{
+  await fn(payload);
+  await sendLog(payload);
+  return {ok:true,name:(payload.gameName||payload.name)};
+  }catch(err){
+  await sendLog(payload);
+  return {ok:false,name:(payload.gameName||payload.name),error:err.message,payload};
+  }
+  }
+  
+  async function callReport(rec,issue){
+  const payload={
+  timestamp:new Date().toISOString(),
+  ...buildPayload(rec),
+  issue,
+  action:"deny",
+  user:currentUserEmail()
+  };
+  await sendLog(payload);
+  return {ok:true,name:(payload.gameName||payload.name)};
+  }
+  
+  async function approveFlow(id,displayName,btn){
+  const rec=byId.get(id);
+  if(!rec) throw new Error("Game not found");
+  const okAuth=await ensureSignedIn();
+  if(!okAuth) throw new Error("Not signed in");
+  const res=await callApprove(rec);
+  await firebase.firestore().collection("cards").add({gameName:res.name,disable:true});
+  btn.closest(".card-container")?.remove();
+  toast("Approved ✓");
+  }
+  
+  async function reportFlow(id,displayName,btn){
+  const rec=byId.get(id);
+  if(!rec) throw new Error("Game not found");
+  const okAuth=await ensureSignedIn();
+  if(!okAuth) throw new Error("Not signed in");
+  const issue=prompt(`Reason for denying ${rec.name}?`);
+  if(!issue) return;
+  const res=await callReport(rec,issue);
+  await firebase.firestore().collection("cards").add({gameName:res.name,disable:true});
+  btn.closest(".card-container")?.remove();
+  toast("Denied ✓");
+  }
+  
+  function wireButtons(){
+  document.querySelectorAll(".btn-check").forEach(btn=>{
+  btn.addEventListener("click",async ()=>{
+  if(inflight)return;
+  try{setBusy(true);await approveFlow(btn.dataset.gameId,btn.dataset.gameName,btn)}
+  catch(err){toast("Error: "+err.message)}
+  finally{setBusy(false)}
+  });
+  });
+  document.querySelectorAll(".btn-delete").forEach(btn=>{
+  btn.addEventListener("click",async ()=>{
+  if(inflight)return;
+  try{setBusy(true);await reportFlow(btn.dataset.gameId,btn.dataset.gameName,btn)}
+  catch(err){toast("Error: "+err.message)}
+  finally{setBusy(false)}
+  });
+  });
+  }
+  
+  function subscribeDisabled(){
+  firebase.firestore().collection("cards").onSnapshot(s=>{
+  disabledSet.clear();
+  s.forEach(d=>{const v=d.data()||{};if(v.disable)disabledSet.add(normId(v.gameName||""))});
+  ready=true;
+  loader.classList.add("hidden");
+  grid.classList.remove("hidden");
+  search.disabled=false;
+  renderAll(filtered(""));
+  });
+  }
+  
+  const grid=document.getElementById("allGame");
+  const search=document.getElementById("searchInput");
+  const searchBox=document.getElementById("searchResults");
+  const drawer=document.getElementById("drawer");
+  const overlay=document.getElementById("overlay");
+  const menuIcon=document.getElementById("menuIcon");
+  const loader=document.getElementById("loader");
+  const busy=document.getElementById("busy");
+  const banner=document.getElementById("banner");
+  const datasetSelect=document.getElementById("dataset");
+  const keySelect=document.getElementById("keySelect");
+  const stripParens=document.getElementById("stripParens");
+  const nameOverride=document.getElementById("nameOverride");
+  const authBtn=document.getElementById("authBtn");
+  
+  firebase.auth().onAuthStateChanged(u=>{
+  document.getElementById("signedIn").textContent=u?(u.email||"Signed in"):"Not signed in";
+  authBtn.textContent=u?"Signed in":"Sign in";
+  authBtn.disabled=!!u;
+  });
+  
+  document.addEventListener("DOMContentLoaded",()=>{
+  grid.classList.add("hidden");
+  search.disabled=true;
+  subscribeDisabled();
+  authBtn.addEventListener("click",()=>ensureSignedIn());
+  search.addEventListener("input",e=>renderSearch(e.target.value));
+  document.addEventListener("click",e=>{if(!searchBox.contains(e.target)&&e.target!==search)searchBox.style.display="none"});
+  function toggleMenu(open){drawer.classList.toggle("open",open);overlay.classList.toggle("show",open)}
+  menuIcon.addEventListener("click",()=>toggleMenu(!drawer.classList.contains("open")));
+  overlay.addEventListener("click",()=>toggleMenu(false));
+  document.querySelectorAll(".drawer a").forEach(a=>a.addEventListener("click",()=>toggleMenu(false)));
+  });
+  </script>  
 </head>
 <body>
 <div style="position:absolute;top:10px;right:10px;width:10px;height:10px;border-radius:50%;cursor:pointer;z-index:1000" onclick="location.href='secret-menu.html'"></div>
